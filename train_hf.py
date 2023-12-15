@@ -33,6 +33,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
+from transformers import ViTConfig, ViTModel
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -128,6 +129,13 @@ def get_args_parser():
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
     return parser
 
+def collate_fn(batch):
+    resize = transforms.Resize(128)
+    print('collate shape')
+    print(resize(batch[0]).shape)
+    return {
+        'pixel_values': torch.stack([resize(x) for x in batch]),
+    }
 
 def train_dino(args):
     utils.init_distributed_mode(args)
@@ -137,6 +145,7 @@ def train_dino(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
+    resize = transforms.Resize(224)
     transform = DataAugmentationDINO(
         args.global_crops_scale,
         args.local_crops_scale,
@@ -152,6 +161,7 @@ def train_dino(args):
         pin_memory=True,
         #drop_last=True,
     )
+    
     print(f"Data loaded: there are {len(dataset)} images.")
     print(len(data_loader))
 
@@ -161,29 +171,12 @@ def train_dino(args):
     # if the network is a Vision Transformer (i.e. vit_tiny, vit_small, vit_base)
     print('vit dict')
     print(vits.__dict__.keys())
-    if args.arch in vits.__dict__.keys():
-        student = vits.__dict__[args.arch](
-            patch_size=args.patch_size,
-            drop_path_rate=args.drop_path_rate,  # stochastic depth
-        )
-        teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
-        embed_dim = student.embed_dim
-    # if the network is a XCiT
-    elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
-        student = torch.hub.load('facebookresearch/xcit:main', args.arch,
-                                 pretrained=False, drop_path_rate=args.drop_path_rate)
-        teacher = torch.hub.load('facebookresearch/xcit:main', args.arch, pretrained=False)
-        embed_dim = student.embed_dim
-    # otherwise, we check if the architecture is in torchvision models
-    elif args.arch in torchvision_models.__dict__.keys():
-        student = torchvision_models.__dict__[args.arch]()
-        teacher = torchvision_models.__dict__[args.arch]()
-        embed_dim = student.fc.weight.shape[1]
-    else:
-        print(f"Unknow architecture: {args.arch}")
+    
+    embed_dim = 384
+    configuration = ViTConfig(hidden_size = embed_dim)
+    student=ViTModel(configuration)
+    teacher=ViTModel(configuration)
 
-    print('Embed dim')
-    print(embed_dim)
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
         embed_dim,
@@ -302,6 +295,7 @@ def train_dino(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    
 
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
@@ -319,6 +313,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
 
         # move images to gpu
         images = [im.cuda(non_blocking=True) for im in images]
+        
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
@@ -454,11 +449,13 @@ class DataAugmentationDINO(object):
         ])
         # transformation for the local small crops
         self.local_crops_number = local_crops_number
+        self.resize = transforms.Resize(224)
         self.local_transfo = transforms.Compose([
             transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
             flip_and_color_jitter,
             utils.GaussianBlur(p=0.5),
             normalize,
+            self.resize,
         ])
 
     def __call__(self, image):

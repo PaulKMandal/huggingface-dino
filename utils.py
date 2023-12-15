@@ -396,6 +396,7 @@ class MetricLogger(object):
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+
         print('{} Total time: {} ({:.6f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
 
@@ -623,7 +624,7 @@ class MultiCropWrapper(nn.Module):
             if isinstance(_out, tuple):
                 _out = _out[0]
             # accumulate outputs
-            output = torch.cat((output, _out))
+            output = torch.cat((output, _out['pooler_output']))
             start_idx = end_idx
         # Run the head forward on the concatenated features.
         return self.head(output)

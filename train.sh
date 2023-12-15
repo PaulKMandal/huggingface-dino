@@ -1,0 +1,1 @@
+python train_hf.py --data_path ~/work/nonfed/my_data --arch 'vit_small' --out_dim 16384
