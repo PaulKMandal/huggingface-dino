@@ -1,4 +1,4 @@
-# DINO implementation for Huggingface
+# A Huggingface Compatible Distillation with No Labels Implementation
 
 
 Running **main-hf.py** will train a Huggingface ViT model using DINO.
